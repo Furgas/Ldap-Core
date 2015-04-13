@@ -84,6 +84,11 @@ if (! defined('LDAP_MODIFY_BATCH_REMOVE_ALL')) {
  * @method  Result search() Perform search operation with SCOPE_SUBTREE - see
  *                          self::ldapSearch() for argument list
  *
+ * @method  PagedResult|Result[] listPaged()   Perform paged search operation with SCOPE_ONELEVEL - see
+ *                                             self::ldapSearchPaged() for argument list
+ * @method  PagedResult|Result[] searchPaged() Perform paged search operation with SCOPE_SUBTREE - see
+ *                                             self::ldapSearchPaged() for argument list
+ *
  * @package Ldap-Core
  */
 class Ldap
@@ -362,18 +367,19 @@ class Ldap
     }
 
     /**
-     * Send LDAP pagination control
+     * Send LDAP pagination control and returns whether it succeded
      *
      * @param  integer      $pageSize       The number of entries by page
      * @param  boolean      $isCritical     Indicates whether the pagination is critical of not
      * @param  string       $cookie         An opaque structure sent by the server
-     * @return self
+     * @return bool
      */
     public function pagedResult($pageSize, $isCritical = false, $cookie = '')
     {
-        ldap_control_paged_result($this->resource, $pageSize, $isCritical, $cookie);
+        $result = @ldap_control_paged_result($this->resource, $pageSize, $isCritical, $cookie);
+        $this->verifyOperation();
 
-        return $this;
+        return $result;
     }
 
     /**
@@ -658,6 +664,46 @@ class Ldap
     }
 
     /**
+     * Search LDAP tree with paging
+     *
+     * The scope of the operation is controlled by the $scope parameter, which can be one of:
+     *
+     * self::SCOPE_SUBTREE - equivalent of ldap_search() (default)
+     * self::SCOPE_ONELEVEL - equivalent of ldap_list()
+     *
+     * @param  string  $baseDn      The base DN for the directory
+     * @param  string  $filter      Ldap query filter (an empty filter is not allowed)
+     * @param  array   $attributes  An array of the required attributes, e.g. array("mail", "sn",
+     *                              "cn"). Empty array (the default) means all attributes
+     * @param  int     $scope       One of self::SCOPE_SUBTREE or self::SCOPE_ONELEVEL
+     * @param  boolean $attrsOnly   Should be set to 1 if only attribute types are wanted
+     * @param  integer $pageSize    Enables you to limit the count of entries fetched in each page. Value must be
+     *                              bigger than 0. Server can further limit page size based on its settings.
+     * @param  integer $timeLimit   Sets the number of seconds how long is spend on the search.
+     *                              Setting this to 0 means no limit.
+     * @param  integer $deref       Specifies how aliases should be handled during the search
+     * @return PagedResult|Result[]
+     * @throws \Exception           On unsupported paging
+     */
+    public function ldapSearchPaged(
+        $baseDn,
+        $filter,
+        array $attributes = [],
+        $scope = self::SCOPE_SUBTREE,
+        $attrsOnly = false,
+        $pageSize = 1000,
+        $timeLimit = 0,
+        $deref = LDAP_DEREF_NEVER
+    ) {
+        $pagingSupported = $this->pagedResult($pageSize, true);
+        if ($pagingSupported === false) {
+            throw new \Exception('Paging results not supported by LDAP server');
+        }
+
+        return new PagedResult($this, $baseDn, $filter, $attributes, $scope, $attrsOnly, $pageSize, $timeLimit, $deref);
+    }
+
+    /**
      * Set the value of the given option
      *
      * @param integer $option An lDAP option constant
@@ -732,9 +778,11 @@ class Ldap
     public function __call($method, $args)
     {
         $allowed = [
-            'read' => static::SCOPE_BASE,
-            'list' => static::SCOPE_ONELEVEL,
-            'search' => static::SCOPE_SUBTREE,
+            'read' => ['ldapSearch', static::SCOPE_BASE],
+            'list' => ['ldapSearch', static::SCOPE_ONELEVEL],
+            'search' => ['ldapSearch', static::SCOPE_SUBTREE],
+            'searchPaged' => ['ldapSearchPaged', static::SCOPE_SUBTREE],
+            'listPaged' => ['ldapSearchPaged', static::SCOPE_ONELEVEL],
         ];
 
         // Only the methods above are allowed to be called magically
@@ -753,10 +801,10 @@ class Ldap
         // If third argument is missing (attributes), make it the default empty array (meaning all attributes).
         $args = array_pad($args, 3, []);
         // Append the search scope to the argument list at key 3 (fourth arg)
-        array_splice($args, 3, 0, $allowed[$method]);
+        array_splice($args, 3, 0, $allowed[$method][1]);
 
         // Do the actual search
-        return call_user_func_array([$this, 'ldapSearch'], $args);
+        return call_user_func_array([$this, $allowed[$method][0]], $args);
     }
 
 

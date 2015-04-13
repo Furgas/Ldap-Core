@@ -50,17 +50,21 @@ class Result
     /**
      * Retrieve the LDAP pagination cookie
      *
-     * @return array    Array with two keys: 'cookie' and 'estimated'
+     * @return array|bool    Array with two keys: 'cookie' and 'estimated', or false on error
      */
     public function pagedResultResponse()
     {
         $cookie = null;
         $estimated = null;
 
-        @ldap_control_paged_result_response($this->link, $this->resource, $cookie, $estimated);
+        $result = ldap_control_paged_result_response($this->link, $this->resource, $cookie, $estimated);
+
+        if ($result === false) {
+            return false;
+        }
 
         return [
-            'cookie' => $cookie,
+            'cookie'    => $cookie,
             'estimated' => $estimated,
         ];
     }
@@ -85,7 +89,9 @@ class Result
      */
     public function freeResult()
     {
-        ldap_free_result($this->resource);
+        if (get_resource_type($this->resource) === 'ldap result') {
+            ldap_free_result($this->resource);
+        }
     }
 
     /**
